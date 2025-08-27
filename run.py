@@ -18,6 +18,7 @@ from PyQt6.QtCore import Qt, QThread, pyqtSignal, QRegularExpression, QSize, QMi
 # ------------------------------ 修复核心：重写QTreeWidget子类处理拖拽事件 ------------------------------
 class DragableTreeWidget(QTreeWidget):
     """重写QTreeWidget，实现内部拖拽事件捕获（替代不存在的itemDragXXX信号）"""
+
     def __init__(self, parent=None):
         super().__init__(parent)
         self.parent_window = parent  # 保存主窗口引用，用于调用主窗口方法
@@ -530,7 +531,7 @@ class ScriptManager(QMainWindow):
                 "edit": QIcon(str(self.icon_path / "edit.svg")),
                 "explorer": QIcon(str(self.icon_path / "FolderOpen.svg")),
                 "add_file": QIcon.fromTheme("document-new"),  # 添加文件图标
-                "add_folder": QIcon.fromTheme("folder-new")   # 添加文件夹图标
+                "add_folder": QIcon.fromTheme("folder-new")  # 添加文件夹图标
             }
         except Exception as e:
             QMessageBox.warning(self, "图标加载警告", f"无法加载本地图标：{str(e)}")
@@ -754,6 +755,100 @@ class ScriptManager(QMainWindow):
         event.setDropAction(Qt.DropAction.MoveAction)
         event.accept()
 
+    # ------------------------------ 新增功能：删除文件/文件夹 ------------------------------
+    def delete_item(self, path, tree_item):
+        """删除文件或文件夹 - 与系统同步"""
+        # 显示确认对话框
+        item_type = "文件" if os.path.isfile(path) else "文件夹"
+        reply = QMessageBox.question(
+            self,
+            f"确认删除",
+            f"确定要删除{item_type} '{os.path.basename(path)}'吗？\n此操作不可撤销！",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            # 执行删除操作
+            if os.path.isfile(path):
+                os.remove(path)
+            else:
+                import shutil
+                shutil.rmtree(path)
+
+            # 从树结构中移除该项目
+            parent = tree_item.parent()
+            if parent:
+                parent.removeChild(tree_item)
+                self.update_parent_check_state(parent)
+                # 重新加载父文件夹以确保显示正确
+                self.reload_directory(parent)
+            else:
+                index = self.tree_widget.indexOfTopLevelItem(tree_item)
+                if index >= 0:
+                    self.tree_widget.takeTopLevelItem(index)
+                    folder_path = tree_item.data(0, Qt.ItemDataRole.UserRole)
+                    if folder_path in self.root_nodes:
+                        del self.root_nodes[folder_path]
+
+            self.statusBar.showMessage(f"{item_type}已删除")
+        except Exception as e:
+            QMessageBox.critical(self, "删除失败", f"无法删除{item_type}：{str(e)}")
+
+    # ------------------------------ 新增功能：重命名文件/文件夹 ------------------------------
+    def rename_item(self, path, tree_item):
+        """重命名文件或文件夹 - 与系统同步"""
+        item_type = "文件" if os.path.isfile(path) else "文件夹"
+        current_name = os.path.basename(path)
+        parent_dir = os.path.dirname(path)
+
+        # 弹窗输入新名称
+        new_name, ok = QInputDialog.getText(
+            self,
+            f"重命名{item_type}",
+            f"请输入新的{item_type}名称：",
+            text=current_name
+        )
+
+        if not ok or not new_name.strip() or new_name == current_name:
+            return  # 取消、空名称或与原名称相同时退出
+        new_name = new_name.strip()
+
+        # 处理文件后缀（确保Python文件保持.py后缀）
+        if os.path.isfile(path) and path.endswith('.py') and not new_name.endswith('.py'):
+            new_name += '.py'
+
+        # 拼接新路径并检查冲突
+        new_path = os.path.join(parent_dir, new_name)
+        if os.path.exists(new_path):
+            QMessageBox.warning(self, "名称冲突", f"{item_type}已存在：{new_path}")
+            return
+
+        try:
+            # 执行重命名操作
+            os.rename(path, new_path)
+
+            # 更新树节点显示名称和数据
+            tree_item.setText(0, new_name)
+            tree_item.setData(0, Qt.ItemDataRole.UserRole, new_path)
+
+            # 如果是根文件夹，更新root_nodes字典
+            if not tree_item.parent() and path in self.root_nodes:
+                del self.root_nodes[path]
+                self.root_nodes[new_path] = tree_item
+
+            self.statusBar.showMessage(f"{item_type}已重命名")
+
+            # 重新加载父文件夹以确保显示正确
+            parent = tree_item.parent()
+            if parent:
+                self.reload_directory(parent)
+        except Exception as e:
+            QMessageBox.critical(self, "重命名失败", f"无法重命名{item_type}：{str(e)}")
+
     # ------------------------------ 原有功能保留 ------------------------------
     def add_file_to_tree(self, parent_item, file_path):
         # 检查当前会话的隐藏项目
@@ -893,6 +988,17 @@ class ScriptManager(QMainWindow):
             edit_action.triggered.connect(lambda: self.open_editor(file_path))
             menu.addAction(edit_action)
 
+            # 新增：重命名菜单项
+            rename_action = QAction("重命名", self)
+            rename_action.triggered.connect(lambda: self.rename_item(file_path, item))
+            menu.addAction(rename_action)
+
+            # 新增：删除菜单项
+            delete_action = QAction("删除文件", self)
+            delete_action.setIcon(self.icons["delete"])
+            delete_action.triggered.connect(lambda: self.delete_item(file_path, item))
+            menu.addAction(delete_action)
+
             open_in_explorer_action = QAction("在文件管理器中打开路径", self)
             open_in_explorer_action.triggered.connect(lambda: self.open_in_explorer(file_path))
             menu.addAction(open_in_explorer_action)
@@ -919,6 +1025,19 @@ class ScriptManager(QMainWindow):
             add_folder_action.setIcon(self.icons["folder_item"])
             add_folder_action.triggered.connect(lambda: self.add_new_item(file_path, is_file=False))
             menu.addAction(add_folder_action)
+
+            menu.addSeparator()  # 分隔线
+
+            # 新增：重命名菜单项
+            rename_action = QAction("重命名", self)
+            rename_action.triggered.connect(lambda: self.rename_item(file_path, item))
+            menu.addAction(rename_action)
+
+            # 新增：删除菜单项
+            delete_action = QAction("删除文件夹", self)
+            delete_action.setIcon(self.icons["delete"])
+            delete_action.triggered.connect(lambda: self.delete_item(file_path, item))
+            menu.addAction(delete_action)
 
             menu.addSeparator()  # 分隔线
 
