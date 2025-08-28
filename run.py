@@ -11,8 +11,8 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QTreeWidget, QTreeWidget
                              QHBoxLayout, QTableWidget, QTableWidgetItem, QHeaderView,
                              QTextEdit, QLabel, QWidget, QStyle, QStatusBar, QInputDialog)
 from PyQt6.QtGui import (QAction, QIcon, QTextCursor, QSyntaxHighlighter, QTextCharFormat,
-                         QColor, QFont, QTextOption, QDrag)
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QRegularExpression, QSize, QMimeData
+                         QColor, QFont, QTextOption)
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QRegularExpression, QSize
 
 
 # ------------------------------ 修复核心：重写QTreeWidget子类处理拖拽事件 ------------------------------
@@ -486,9 +486,9 @@ class ColoredTextEdit(QTextEdit):
 class ScriptManager(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Python脚本管理器")
+        self.setWindowTitle("Python脚本管理器V1.0")
         self.resize(1200, 800)
-        self.icon_path = Path(__file__).parent / "resources" / "icons"
+        self.icon_path = self.get_resource_root() / "resources" / "icons"
 
         self.icons = {}
         self.load_icons()
@@ -515,6 +515,18 @@ class ScriptManager(QMainWindow):
         self.init_ui()
         self.load_python_paths()
 
+    def get_resource_root(self):
+        """
+        返回主脚本所在目录（开发环境）或 PyInstaller 临时目录（打包后）
+        保证 resources 能被正确找到
+        """
+        if getattr(sys, 'frozen', False):
+            # 打包后：sys._MEIPASS 指向临时资源目录
+            # 此时 resources 已通过 --add-data 打包到此目录下
+            return Path(sys._MEIPASS)
+        else:
+            # 开发环境：__file__ 的父目录就是项目根目录
+            return Path(__file__).parent
     def load_icons(self):
         try:
             self.icons = {
