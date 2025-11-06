@@ -1,4 +1,4 @@
-# Python 脚本管理器
+# Python 执行管理器
 
 ## ✉️ 页面展示
 ![image](./截图.png)
